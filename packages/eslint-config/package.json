@@ -1,0 +1,19 @@
+{
+  "name": "@akb/eslint-config",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ESLint configurations for the AI Knowledge Base monorepo",
+  "license": "MIT",
+  "files": ["*.js"],
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.29.0",
+    "@typescript-eslint/parser": "^8.29.0",
+    "eslint": "^9.22.0",
+    "eslint-config-prettier": "^10.1.1",
+    "eslint-plugin-only-warn": "^1.1.0",
+    "eslint-plugin-react": "^7.37.4",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.19",
+    "typescript": "~5.8.0"
+  }
+}

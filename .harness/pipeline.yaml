@@ -1,0 +1,316 @@
+# =============================================
+# AI Knowledge Base - Harness CI/CD Pipeline
+# =============================================
+# Place this file in .harness/ directory and import into Harness
+# Requires: Docker Registry connector, K8s/VM connector configured in Harness
+
+pipeline:
+  name: akb-ci-cd
+  identifier: akbCICD
+  projectIdentifier: ai-knowledge-base
+  orgIdentifier: default
+  tags:
+    project: ai-knowledge-base
+    team: platform
+  stages:
+    # =========================================
+    # Stage 1: Build & Test
+    # =========================================
+    - stage:
+        name: Build and Test
+        identifier: BuildAndTest
+        type: CI
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: k8s_cluster_connector
+              namespace: harness-delegate-ng
+          execution:
+            steps:
+              - step:
+                  name: Install Dependencies
+                  identifier: InstallDeps
+                  type: Run
+                  spec:
+                    shell: Sh
+                    command: |
+                      npm install -g pnpm@9.15.0
+                      pnpm install --frozen-lockfile
+                    image: node:22-alpine
+
+              - step:
+                  name: Lint and Format Check
+                  identifier: LintCheck
+                  type: Run
+                  spec:
+                    shell: Sh
+                    command: |
+                      pnpm lint
+                      pnpm format --check
+                    image: node:22-alpine
+
+              - step:
+                  name: Type Check
+                  identifier: TypeCheck
+                  type: Run
+                  spec:
+                    shell: Sh
+                    command: pnpm typecheck
+                    image: node:22-alpine
+
+              - step:
+                  name: Run Tests
+                  identifier: RunTests
+                  type: Run
+                  spec:
+                    shell: Sh
+                    command: pnpm test
+                    image: node:22-alpine
+
+              - step:
+                  name: Build API Image
+                  identifier: BuildAPIImage
+                  type: BuildAndPushDockerRegistry
+                  spec:
+                    connectorRef: docker_registry_connector
+                    repo: <+pipeline.variables.docker_registry>/ai-kb-api
+                    dockerfile: apps/api/Dockerfile
+                    context: .
+                    tags:
+                      - <+pipeline.sequenceId>
+                      - <+pipeline.variables.tag>
+                      - latest
+                    optimize: true
+
+              - step:
+                  name: Build Web Image
+                  identifier: BuildWebImage
+                  type: BuildAndPushDockerRegistry
+                  spec:
+                    connectorRef: docker_registry_connector
+                    repo: <+pipeline.variables.docker_registry>/ai-kb-web
+                    dockerfile: apps/web/Dockerfile
+                    context: .
+                    tags:
+                      - <+pipeline.sequenceId>
+                      - <+pipeline.variables.tag>
+                      - latest
+                    optimize: true
+
+              - step:
+                  name: Security Scan - API
+                  identifier: SecurityScanAPI
+                  type: Security
+                  spec:
+                    mode: orchestration
+                    config: default
+                    target:
+                      type: container
+                      detection: manual
+                      name: ai-kb-api
+                      variant: <+pipeline.sequenceId>
+                      workspace: <+pipeline.sequenceId>
+
+              - step:
+                  name: Security Scan - Web
+                  identifier: SecurityScanWeb
+                  type: Security
+                  spec:
+                    mode: orchestration
+                    config: default
+                    target:
+                      type: container
+                      detection: manual
+                      name: ai-kb-web
+                      variant: <+pipeline.sequenceId>
+                      workspace: <+pipeline.sequenceId>
+
+    # =========================================
+    # Stage 2: Deploy to Staging
+    # =========================================
+    - stage:
+        name: Deploy Staging
+        identifier: DeployStaging
+        type: Deployment
+        spec:
+          service:
+            serviceRef: akb_staging_service
+          environment:
+            environmentRef: staging
+            infrastructureDefinitions:
+              - identifier: k8s_staging
+          execution:
+            steps:
+              - step:
+                  name: Deploy API
+                  identifier: DeployAPIStaging
+                  type: K8sRollingDeploy
+                  timeout: 10m
+                  spec:
+                    skipDryRun: false
+                    pruningEnabled: false
+
+              - step:
+                  name: Deploy Web
+                  identifier: DeployWebStaging
+                  type: K8sRollingDeploy
+                  timeout: 10m
+                  spec:
+                    skipDryRun: false
+                    pruningEnabled: false
+
+              - step:
+                  name: Verify Deployment
+                  identifier: VerifyDeploymentStaging
+                  type: Run
+                  spec:
+                    shell: Sh
+                    command: |
+                      echo "Running smoke tests against staging..."
+                      curl -sf http://staging.ai-kb.local/health || exit 1
+                      curl -sf http://staging.ai-kb.local/api/health || exit 1
+                    image: curlimages/curl:latest
+
+            rollbackSteps:
+              - step:
+                  name: Rollback API
+                  identifier: RollbackAPIStaging
+                  type: K8sRollingRollback
+                  timeout: 10m
+
+              - step:
+                  name: Rollback Web
+                  identifier: RollbackWebStaging
+                  type: K8sRollingRollback
+                  timeout: 10m
+
+        failureStrategies:
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: StageRollback
+
+    # =========================================
+    # Stage 3: Deploy to Production
+    # =========================================
+    - stage:
+        name: Deploy Production
+        identifier: DeployProduction
+        type: Deployment
+        spec:
+          service:
+            serviceRef: akb_production_service
+          environment:
+            environmentRef: production
+            infrastructureDefinitions:
+              - identifier: k8s_production
+          execution:
+            steps:
+              - step:
+                  name: Approval
+                  identifier: Approval
+                  type: HarnessApproval
+                  timeout: 1d
+                  spec:
+                    approvers:
+                      minimumCount: 1
+                      userGroups:
+                        - account._all_account_admin_users
+                    includePipelineExecutionHistory: true
+
+              - step:
+                  name: Deploy API
+                  identifier: DeployAPIProd
+                  type: K8sCanaryDeploy
+                  timeout: 15m
+                  spec:
+                    instanceSelection:
+                      type: Count
+                      spec:
+                        count: 1
+                    skipDryRun: false
+
+              - step:
+                  name: Canary Analysis
+                  identifier: CanaryAnalysis
+                  type: Verify
+                  timeout: 15m
+                  spec:
+                    type: Rolling
+                    spec:
+                      sensitivity: HIGH
+                      duration: 15m
+                      baseline: LastSuccessfulExecution
+
+              - step:
+                  name: Promote API
+                  identifier: PromoteAPIProd
+                  type: K8sCanaryDelete
+                  timeout: 10m
+
+              - step:
+                  name: Deploy Web
+                  identifier: DeployWebProd
+                  type: K8sRollingDeploy
+                  timeout: 10m
+                  spec:
+                    skipDryRun: false
+                    pruningEnabled: false
+
+              - step:
+                  name: Verify Production
+                  identifier: VerifyProduction
+                  type: Run
+                  spec:
+                    shell: Sh
+                    command: |
+                      echo "Running production health checks..."
+                      curl -sf http://ai-kb.local/health || exit 1
+                      curl -sf http://ai-kb.local/api/health || exit 1
+                    image: curlimages/curl:latest
+
+            rollbackSteps:
+              - step:
+                  name: Rollback API
+                  identifier: RollbackAPIProd
+                  type: K8sCanaryDelete
+                  timeout: 10m
+
+              - step:
+                  name: Rollback Web
+                  identifier: RollbackWebProd
+                  type: K8sRollingRollback
+                  timeout: 10m
+
+        failureStrategies:
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: StageRollback
+
+  variables:
+    - name: docker_registry
+      type: String
+      value: registry.hub.docker.com/your-org
+      description: Docker registry URL
+    - name: tag
+      type: String
+      value: <+pipeline.sequenceId>
+      description: Image tag
+
+  notificationRules:
+    - name: Pipeline Notifications
+      identifier: PipelineNotifications
+      pipelineEvents:
+        - type: PipelineStart
+        - type: PipelineEnd
+        - type: PipelineFailure
+      notificationMethod:
+        type: Email
+        spec:
+          userGroups: [account._all_account_admin_users]
+      enabled: true
