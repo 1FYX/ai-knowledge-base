@@ -1,40 +1,31 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { LlmService } from '../llm/llm.service';
+import { VectorService, SearchResult } from '../vector/vector.service';
 
 @Injectable()
 export class SearchService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private llm: LlmService,
+    private vector: VectorService,
+  ) {}
 
+  /**
+   * 语义检索：query → embedding → pgvector top-k。
+   * 若用户未配置 LLM，getDecryptedLlmConfig 抛 'LLM_NOT_CONFIGURED'，
+   * 由调用方（controller / filter）转成可读响应。
+   */
   async semanticSearch(params: {
+    userId: string;
     query: string;
-    knowledgeBaseId?: string;
+    knowledgeBaseId: string;
     limit?: number;
-  }) {
-    // Placeholder: real implementation requires OpenAI embedding + pgvector
-    // For now, return keyword search results
-    const { query, knowledgeBaseId, limit = 5 } = params;
+  }): Promise<SearchResult[]> {
+    const { userId, query, knowledgeBaseId, limit = 5 } = params;
 
-    const where: any = {
-      content: { contains: query, mode: 'insensitive' },
-    };
+    // 1. 生成查询向量
+    const queryEmbedding = await this.llm.embedOne(userId, query);
 
-    if (knowledgeBaseId) {
-      where.document = { knowledgeBaseId };
-    }
-
-    const chunks = await this.prisma.documentChunk.findMany({
-      where,
-      take: limit,
-      include: {
-        document: { select: { id: true, originalName: true, knowledgeBaseId: true } },
-      },
-    });
-
-    return chunks.map((chunk) => ({
-      id: chunk.id,
-      content: chunk.content,
-      document: chunk.document,
-      similarity: 0.85, // placeholder
-    }));
+    // 2. 向量检索 top-k
+    return this.vector.search(queryEmbedding, knowledgeBaseId, limit);
   }
 }

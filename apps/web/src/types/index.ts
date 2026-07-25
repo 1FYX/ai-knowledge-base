@@ -48,3 +48,11 @@ export interface ApiResponse<T> {
   success: boolean;
   data: T;
 }
+
+/** LLM 配置（对外视图：不含明文 apiKey） */
+export interface LlmConfig {
+  baseUrl?: string;
+  hasApiKey: boolean;
+  chatModel?: string;
+  embeddingModel?: string;
+}

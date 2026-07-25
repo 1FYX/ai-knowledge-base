@@ -1,15 +1,23 @@
 import { useState, useEffect, useRef } from 'react';
+import { gsap } from 'gsap';
+import { useGSAP } from '@gsap/react';
+import { Button, Textarea, Spinner } from 'flowbite-react';
 import { chatApi } from '../lib/api';
-import { useParams } from '../hooks/useParams';
+import { useHashRoute } from '../hooks/useHashRoute';
+
+gsap.registerPlugin(useGSAP);
 
 export default function ChatPage() {
-  const { id: sessionId } = useParams();
+  const { segments, navigate } = useHashRoute();
+  const sessionId = segments[1]; // /chat/:id
+  const messagesRef = useRef<HTMLDivElement>(null);
   const [sessions, setSessions] = useState<any[]>([]);
   const [currentSession, setCurrentSession] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const prevMsgCount = useRef(0);
 
   const fetchSessions = async () => {
     try {
@@ -34,6 +42,9 @@ export default function ChatPage() {
     fetchSessions();
     if (sessionId) {
       fetchSession(sessionId);
+    } else {
+      setCurrentSession(null);
+      setMessages([]);
     }
   }, [sessionId]);
 
@@ -41,9 +52,28 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // 新消息滑入淡入：只对增量消息做动画（避免历史消息每次都闪动）
+  useEffect(() => {
+    const total = messages.length;
+    const newCount = total - prevMsgCount.current;
+    if (newCount > 0 && messagesRef.current) {
+      const els = messagesRef.current.querySelectorAll('[data-msg]');
+      const startIdx = Math.max(0, total - newCount);
+      const newEls = Array.from(els).slice(startIdx);
+      gsap.from(newEls, {
+        opacity: 0,
+        y: 12,
+        duration: 0.3,
+        ease: 'power2.out',
+        stagger: 0.04,
+      });
+    }
+    prevMsgCount.current = total;
+  }, [messages]);
+
   const createSession = async () => {
-    const res = await chatApi.createSession({ title: 'New Chat' });
-    window.location.hash = `#/chat/${res.data.id}`;
+    const res = await chatApi.createSession({ title: '新对话' });
+    navigate(`/chat/${res.data.id}`);
     fetchSessions();
   };
 
@@ -53,165 +83,137 @@ export default function ChatPage() {
     setInput('');
     setLoading(true);
 
-    const userMsg = { id: Date.now().toString(), role: 'USER', content, createdAt: new Date().toISOString() };
+    const userMsg = {
+      id: Date.now().toString(),
+      role: 'USER',
+      content,
+      createdAt: new Date().toISOString(),
+    };
     setMessages((prev) => [...prev, userMsg]);
 
-    try {
-      // Try streaming first
-      const res = await chatApi.sendMessage(currentSession.id, content);
-      setMessages((prev) => [...prev, res.data]);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
+    // 占位助手消息，流式追加内容
+    const assistantId = Date.now().toString() + '-a';
+    setMessages((prev) => [
+      ...prev,
+      { id: assistantId, role: 'ASSISTANT', content: '', createdAt: new Date().toISOString() },
+    ]);
+
+    chatApi.streamMessage(currentSession.id, content, {
+      onChunk: (chunk) => {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + chunk } : m)),
+        );
+      },
+      onDone: () => setLoading(false),
+      onError: (err) => {
+        // 用红色错误气泡展示友好消息（err 已是后端翻译过的中文）
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? { ...m, content: m.content || `⚠ ${err}`, isError: true }
+              : m,
+          ),
+        );
+        setLoading(false);
+      },
+    });
   };
 
   return (
-    <div style={styles.container}>
-      <aside style={styles.sidebar}>
-        <button onClick={createSession} style={styles.newChatBtn}>+ New Chat</button>
-        <div style={styles.sessionList}>
+    <div className="flex h-full">
+      {/* 会话列表 */}
+      <aside className="flex w-64 flex-col border-r border-slate-700 bg-slate-800 p-3">
+        <Button onClick={createSession} className="mb-3">
+          + 新对话
+        </Button>
+        <div className="flex-1 space-y-1 overflow-y-auto">
           {sessions.map((s) => (
-            <a
+            <button
               key={s.id}
-              href={`/#/chat/${s.id}`}
-              style={{
-                ...styles.sessionItem,
-                background: sessionId === s.id ? '#334155' : 'transparent',
-              }}
+              onClick={() => navigate(`/chat/${s.id}`)}
+              className={`block w-full truncate rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                sessionId === s.id
+                  ? 'bg-slate-600 text-white'
+                  : 'text-slate-300 hover:bg-slate-700'
+              }`}
             >
               {s.title}
-            </a>
+            </button>
           ))}
+          {sessions.length === 0 && (
+            <p className="px-3 py-2 text-xs text-slate-500">暂无对话</p>
+          )}
         </div>
       </aside>
 
-      <div style={styles.chatArea}>
+      {/* 对话区 */}
+      <div className="flex flex-1 flex-col">
         {currentSession ? (
           <>
-            <div style={styles.messages}>
-              {messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  style={{
-                    ...styles.message,
-                    alignSelf: msg.role === 'USER' ? 'flex-end' : 'flex-start',
-                    background: msg.role === 'USER' ? '#3b82f6' : '#1e293b',
-                  }}
-                >
-                  <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{msg.content}</p>
-                </div>
-              ))}
-              {loading && (
-                <div style={{ ...styles.message, alignSelf: 'flex-start', background: '#1e293b' }}>
-                  <p style={{ margin: 0, color: '#94a3b8' }}>Thinking...</p>
+            {/* 消息区 */}
+            <div ref={messagesRef} className="flex-1 space-y-4 overflow-y-auto p-6">
+              {messages.map((msg) => {
+                const isUser = msg.role === 'USER';
+                return (
+                  <div
+                    key={msg.id}
+                    data-msg
+                    className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div
+                      className={`max-w-[75%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                        msg.isError
+                          ? 'rounded-bl-sm border border-red-800 bg-red-950/50 text-red-200'
+                          : isUser
+                            ? 'rounded-br-sm bg-blue-600 text-white'
+                            : 'rounded-bl-sm bg-slate-800 text-slate-100'
+                      }`}
+                    >
+                      {msg.content || (loading && !isUser ? '思考中...' : '')}
+                    </div>
+                  </div>
+                );
+              })}
+              {loading && messages[messages.length - 1]?.role === 'USER' && (
+                <div className="flex justify-start">
+                  <div className="rounded-2xl rounded-bl-sm bg-slate-800 px-4 py-3">
+                    <Spinner size="sm" />
+                  </div>
                 </div>
               )}
               <div ref={messagesEndRef} />
             </div>
-            <div style={styles.inputArea}>
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                placeholder="Ask anything..."
-                style={styles.input}
-                disabled={loading}
-              />
-              <button onClick={sendMessage} disabled={loading} style={styles.sendBtn}>
-                Send
-              </button>
+
+            {/* 输入区 */}
+            <div className="border-t border-slate-700 p-4">
+              <div className="flex items-end gap-2">
+                <Textarea
+                  rows={1}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage();
+                    }
+                  }}
+                  placeholder="输入你的问题...（Enter 发送，Shift+Enter 换行）"
+                  className="flex-1 resize-none"
+                  disabled={loading}
+                />
+                <Button onClick={sendMessage} disabled={loading || !input.trim()}>
+                  发送
+                </Button>
+              </div>
             </div>
           </>
         ) : (
-          <div style={styles.empty}>
-            <p style={{ color: '#94a3b8', fontSize: '16px' }}>Select a chat or start a new one</p>
+          <div className="flex flex-1 flex-col items-center justify-center text-slate-400">
+            <div className="mb-3 text-5xl opacity-30">💬</div>
+            <p>选择一个对话，或开始新对话</p>
           </div>
         )}
       </div>
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  container: { display: 'flex', height: 'calc(100vh - 64px)' },
-  sidebar: {
-    width: '260px',
-    background: '#1e293b',
-    borderRight: '1px solid #334155',
-    padding: '16px',
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  newChatBtn: {
-    background: '#3b82f6',
-    color: '#fff',
-    border: 'none',
-    padding: '10px',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    fontWeight: 600,
-    marginBottom: '16px',
-  },
-  sessionList: { display: 'flex', flexDirection: 'column', gap: '4px', overflow: 'auto', flex: 1 },
-  sessionItem: {
-    color: '#cbd5e1',
-    textDecoration: 'none',
-    padding: '8px 12px',
-    borderRadius: '6px',
-    fontSize: '13px',
-    display: 'block',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  },
-  chatArea: { flex: 1, display: 'flex', flexDirection: 'column' },
-  messages: {
-    flex: 1,
-    overflow: 'auto',
-    padding: '20px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-  },
-  message: {
-    maxWidth: '70%',
-    padding: '12px 16px',
-    borderRadius: '12px',
-    color: '#f8fafc',
-    fontSize: '14px',
-    lineHeight: 1.6,
-  },
-  inputArea: {
-    padding: '16px 20px',
-    borderTop: '1px solid #334155',
-    display: 'flex',
-    gap: '10px',
-  },
-  input: {
-    flex: 1,
-    padding: '12px 16px',
-    borderRadius: '10px',
-    border: '1px solid #334155',
-    background: '#1e293b',
-    color: '#f8fafc',
-    fontSize: '14px',
-    outline: 'none',
-  },
-  sendBtn: {
-    background: '#3b82f6',
-    color: '#fff',
-    border: 'none',
-    padding: '12px 24px',
-    borderRadius: '10px',
-    cursor: 'pointer',
-    fontWeight: 600,
-  },
-  empty: {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-};

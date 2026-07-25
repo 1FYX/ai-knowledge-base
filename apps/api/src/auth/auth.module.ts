@@ -1,23 +1,27 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import type { StringValue } from 'ms';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { PrismaModule } from '../prisma/prisma.module';
 
-// signOptions.expiresIn expects ms's StringValue; process.env is widened to
-// `string`, so we narrow it via the proper type from @types/ms.
-const jwtExpiresIn = (process.env.JWT_EXPIRES_IN || '7d') as StringValue;
-
 @Module({
   imports: [
     PrismaModule,
-    // global: true makes JwtService available to JwtAuthGuard in every module
-    // without each module needing to import JwtModule/AuthModule explicitly.
-    JwtModule.register({
+    // 用 registerAsync + ConfigService:模块装饰器是静态求值的,若直接读
+    // process.env,此刻 ConfigModule 尚未初始化,会拿不到 JWT_SECRET,导致
+    // 签发与守卫验证用不同 secret(签发走 'dev-secret',验证走真实值 → 401)。
+    JwtModule.registerAsync({
       global: true,
-      secret: process.env.JWT_SECRET || 'dev-secret',
-      signOptions: { expiresIn: jwtExpiresIn },
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get<string>('JWT_SECRET') || 'dev-secret',
+        signOptions: {
+          expiresIn: (config.get<string>('JWT_EXPIRES_IN') || '7d') as StringValue,
+        },
+      }),
     }),
   ],
   controllers: [AuthController],

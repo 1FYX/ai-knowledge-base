@@ -27,9 +27,10 @@
 - [x] Prisma 首次迁移 `init` 已生成
 - [x] `@nestjs/jwt` 类型问题（`as StringValue` + 安装 `ms`/`@types/ms`）
 - [x] `JwtModule` 全局化（`global: true`）解决守卫注入
-- [ ] **`DocumentsModule` 漏注册第二个 controller**：`KBDocsController` 未加入 `controllers` 数组 → 前端 `docApi.list/create` 404
-- [ ] **修复 SSE 流式接口**：当前 `@Sse` + `POST` + `@Body` 与 EventSource 不兼容；改为 `fetch` + `ReadableStream`（可 POST + 带 Authorization 头）
-- [ ] **统一包管理器**：删除 `apps/web/package-lock.json`，改用根 `pnpm-lock.yaml`
+- [x] **`DocumentsModule` 漏注册第二个 controller**：`KBDocsController` 已加入 `controllers` 数组
+- [x] **修复 SSE 流式接口**：改为 POST + `fetch` ReadableStream（手动写 SSE 帧），前端对接流式渲染
+- [x] **修复 JWT 签发/验证 secret 不一致**：`JwtModule.registerAsync` + `ConfigService`（原 `register` 静态求值时 env 未加载，签发用 `dev-secret` 而验证用真实 secret → 401）
+- [x] **统一包管理器**：删除 `apps/web/package-lock.json`，改用根 `pnpm-lock.yaml`
 - [ ] docker-compose 补 `redis` 服务（M5 RAG/限流依赖）
 - [ ] 环境变量 schema 校验（Joi/Zod）
 - [ ] 清理脚手架残留（`app.controller.spec.ts` 断言、`apps/web` 模板资源）
@@ -101,74 +102,72 @@
 
 ### M3.1 🔴 真实文件上传
 
-- [ ] 后端 Multer（`@nestjs/platform-express` 已装）：`@UseInterceptors(FileInterceptor)` + 磁盘/S3 存储
-- [ ] 替换前端"伪上传"：`KnowledgeBaseDetail.handleFileChange` 由 POST 元数据改为 `FormData` 真实上传
-- [ ] 文件大小/类型校验（PDF/DOCX/TXT/MD），返回 `Document` 记录（status=PENDING）
+- [x] 后端 Multer：`@UseInterceptors(FileInterceptor)` + 磁盘存储（`uploads/`，启动时自动建目录）
+- [x] 替换前端"伪上传"：`KnowledgeBaseDetail` 改用 `FormData` 真实上传（`docApi.upload`）
+- [x] 文件大小/类型校验（PDF/DOCX/TXT/MD，20MB 上限），返回 `Document` 记录（status=PENDING）
 
 ### M3.2 🟡 解析与切片
 
-- [ ] 新建 `ingestion/` 模块：
+- [x] 新建 `ingestion/` 模块：
   - 解析：PDF（`pdf-parse`）/ DOCX（`mammoth`）/ TXT/MD（原生）
-  - 切片：按 `KnowledgeBase.chunkSize`（默认 1000）/ `chunkOverlap`（默认 200）分块，schema 已有配置
-- [ ] 写入 `DocumentChunk`（content + chunkIndex + pageNumber）
-- [ ] 调 `llm.embed` 生成向量 → `vector.upsertChunks`
+  - 切片：递归切分器 `chunker.ts`，按 `KnowledgeBase.chunkSize` / `chunkOverlap` 分块
+- [x] 写入 `DocumentChunk`（content + chunkIndex + pageNumber）
+- [x] 调 `llm.embed` 批量生成向量（每批 16 条）→ `vector.upsertChunks`
 
 ### M3.3 🟡 异步处理
 
-- [ ] BullMQ（依赖 Redis）：上传 → 入队 `ingestion` → worker 解析+切片+embedding+入库
-- [ ] 状态机：`PENDING → PROCESSING → INDEXED` / `ERROR`（含 `errorMessage`，schema 已有）
-- [ ] 前端轮询文档状态 / SSE 推送进度
+- [x] fire-and-forget 后台处理：上传接口立即返回，`IngestionService.process` 异步执行（M5 升级 BullMQ）
+- [x] 状态机：`PENDING → PROCESSING → INDEXED` / `ERROR`（`errorMessage` 写入失败原因）
+- [x] 前端轮询：有 PENDING/PROCESSING 文档时每 2s 刷新，直到终态
 
 ---
 
-## M4 — 前端美化（shadcn/ui 全栈迁移）
+## M4 — 前端美化（Flowbite + GSAP）
 
-将前端从"手写内联 style + hash 路由 + 原生 fetch"升级为现代技术栈，与 `AGENTS.md` 既定方向对齐。
+将前端从"手写内联 style + hash 路由 + 原生 fetch"升级为现代技术栈。
+> 注：原计划用 shadcn/ui，实际改用 **Flowbite React**（决策调整）。同时引入 **GSAP** 做动画。
 
-### 当前前端实际技术栈（迁移基线）
+### 实际采用的技术栈（已完成）
 
-| 类别 | 现状 | 目标 |
-|---|---|---|
-| 路由 | 手写 hash 路由 | React Router v6 |
-| 服务端状态 | `useState`+`useEffect`+`fetch` | TanStack Query |
-| 客户端状态 | React Context | Zustand |
-| 样式 | 全部内联 `style={{}}` | Tailwind CSS |
-| 组件 | 手写原生标签 | shadcn/ui |
+| 类别 | 选型 |
+|---|---|
+| 样式 | Tailwind CSS v4（CSS-based 配置，`@import "tailwindcss"`） |
+| 组件库 | Flowbite React 0.12（`flowbite/plugin` + `@source` 扫描类名） |
+| 动画 | GSAP + `@gsap/react`（`useGSAP` hook，React 19 安全集成） |
+| 路由 | 自实现 `useHashRoute`（订阅 `hashchange`，修复点击不切换 bug） |
+| 主题 | 暗色（`<html class="dark">`），slate-900 + blue-600 配色 |
+| 健壮性 | `ErrorBoundary` 捕获渲染异常，避免黑屏 |
 
-> 现状：除 React + Vite 外几乎无第三方库。内联 style 分布：Layout 10、Chat 16、KBDetail 18、KBList 16、Login 11 处。
+### M4.1 ✅ 基建引入（已完成）
 
-### M4.1 🔴 基建引入
+- [x] Tailwind CSS v4 + `@tailwindcss/vite` 插件
+- [x] Flowbite React + `flowbite/plugin`（修正：`@plugin "flowbite-react"` 是错误写法，会报 `k is not a function`）
+- [x] 修复路由不切换 bug（原 `Router` 只读一次 hash，未订阅事件 → 点击侧边栏需刷新）
+- [x] ErrorBoundary 全局包裹
 
-- [ ] 安装 Tailwind CSS v4 + 配置 `tailwind.config` + `index.css` 引入
-- [ ] 安装 shadcn/ui（`npx shadcn@latest init`），配置路径别名 `@/*`
-- [ ] 安装 React Router v6，替换手写 hash 路由（`/login` `/kbs` `/kbs/:id` `/chat/:id`）
-- [ ] 安装 TanStack Query：`QueryClientProvider` 包裹 App，封装 `useQuery`/`useMutation` hooks
-- [ ] 安装 Zustand：迁移 `useAuth` 状态（token/user/loading）到 store
-- [ ] 重构 `lib/api.ts`：保留 fetch 封装，但 token 从 store 读，401 自动登出跳转
+### M4.2 ✅ 页面重写（已完成，全中文）
 
-### M4.2 🔴 核心 UI 组件搭建
+- [x] **Layout**：自定义侧边栏 + 导航 + Avatar Dropdown 用户菜单
+- [x] **Login**：Card + Label/TextInput/Button/Alert，标题/卡片错峰入场动画
+- [x] **KnowledgeBases**：Card 网格 + Modal 新建 + 空状态，卡片错峰入场
+- [x] **KnowledgeBaseDetail**：Card + Badge（文档状态中文化）+ 真实上传 + 状态轮询
+- [x] **Chat**：Textarea + 流式打字 + 气泡（用户右/助手左）+ 新消息滑入动画
+- [x] **Settings**：LLM 配置表单（BYOK）
 
-按 shadcn/ui 引入（`npx shadcn@latest add <component>`）：
+### M4.3 ✅ 动画（GSAP，克制专业风格 0.3–0.4s）
 
-- [ ] **Layout**：`Sidebar`（导航：知识库/对话）+ `Avatar`（用户头像）+ `DropdownMenu`（登出）+ `Toaster`（全局通知）
-- [ ] **Login**：`Card` + `Form` + `Input` + `Button` + `Tabs`（登录/注册切换）
-- [ ] **KnowledgeBases**：`Card` 网格 + `Dialog`（新建）+ `AlertDialog`（删除确认）+ `Skeleton`（加载态）
-- [ ] **KnowledgeBaseDetail**：`Tabs`（文档/设置）+ 文档列表 `Table` + `Upload` 区（dropzone）+ 状态 `Badge`
-- [ ] **Chat**：消息气泡 + 流式打字效果 + `sources` 引用卡片 + `Textarea` + `ScrollArea`
+- [x] 页面切换转场（淡入 + 上移）
+- [x] Login 标题/卡片时间轴入场
+- [x] 知识库卡片错峰入场（stagger）
+- [x] 对话气泡增量滑入（只对新消息动画）
 
-### M4.3 🟡 设计系统统一
+### M4.4 🟢 未来增强（可选）
 
-- [ ] 定义主题：深色模式为主（延续现有 `#0f172a` 基调），支持浅色切换
-- [ ] 统一 spacing / radius / typography（Tailwind token）
-- [ ] 响应式断点（移动端可用）
-
-### M4.4 🟢 体验增强
-
-- [ ] Chat 流式渲染（对接 M2.3 + M1.1 SSE 修复）
-- [ ] 文档处理进度展示（对接 M3.3）
+- [ ] TanStack Query 替代手写 `useState`+`fetch`（服务端状态管理）
+- [ ] Zustand 替代 Context（客户端状态）
 - [ ] Markdown 渲染 + 代码高亮（回答里的代码块）
 - [ ] 回答"复制 / 重新生成 / 反馈"操作栏
-- [ ] 空状态插画 / 加载骨架屏
+- [ ] `sources` 引用卡片渲染（后端已支持，前端未展示）
 
 ---
 
@@ -202,11 +201,14 @@
 
 ## 建议推进顺序
 
-1. **M1.1 剩余项** —— SSE 修复、`KBDocsController` 注册、统一包管理（半天）
-2. **M2 RAG 链路** —— 核心价值，简历亮点（重点投入）
-3. **M3 文档流水线** —— 让上传真正可用（依赖 M2）
-4. **M4 前端美化** —— shadcn/ui 迁移（可与 M2/M3 部分并行，因前后端解耦）
-5. **M5 稳定性与生产化** —— 打磨收尾
+1. ~~**M1 工程基线**~~ —— ✅ 已完成
+2. ~~**M2 RAG 链路**~~ —— ✅ 已完成（BYOK + pgvector + 流式 RAG）
+3. ~~**M3 文档流水线**~~ —— ✅ 已完成（上传 + 解析 + 切片 + embedding + 状态机）
+4. ~~**M4 前端美化**~~ —— ✅ 已完成（Flowbite + GSAP，全中文 UI）
+5. **M5 稳定性与生产化** —— 待推进：权限归属校验、BullMQ、对象存储、测试、CI 完善
+
+> 注：M1–M4 全部完成。当前是一个**功能完整的 RAG 知识库**（需用户在设置页配置 LLM Key 即可使用）。
+> M5 为生产化加固，不影响核心功能可用性。
 
 ---
 

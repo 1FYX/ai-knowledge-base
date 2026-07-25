@@ -17,6 +17,13 @@ model User {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  // LLM 配置（BYOK：用户自带 Key）。llmApiKey 加密存储。
+  // 未配置时 RAG 相关接口返回 LLM_NOT_CONFIGURED。
+  llmBaseUrl        String? @map("llm_base_url")
+  llmApiKey         String? @map("llm_api_key")
+  llmChatModel      String? @map("llm_chat_model")
+  llmEmbeddingModel String? @map("llm_embedding_model")
+
   knowledgeBases KnowledgeBase[]
   chatSessions   ChatSession[]
 

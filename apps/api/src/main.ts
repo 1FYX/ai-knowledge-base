@@ -1,9 +1,15 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
+import { mkdirSync } from 'fs';
+import { dirname, resolve } from 'path';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 
 async function bootstrap() {
+  // 确保上传目录存在（Multer 不会自动创建）
+  const uploadsDir = resolve(process.cwd(), 'uploads');
+  mkdirSync(uploadsDir, { recursive: true });
+
   const app = await NestFactory.create(AppModule);
 
   app.enableCors({
@@ -22,7 +28,8 @@ async function bootstrap() {
   app.useGlobalFilters(new GlobalExceptionFilter());
   app.setGlobalPrefix('api');
 
-  await app.listen(process.env.PORT ?? 3000);
-  console.log(`API running on http://localhost:${process.env.PORT ?? 3000}/api`);
+  const port = process.env.PORT ?? 3000;
+  await app.listen(port);
+  new Logger('Bootstrap').log(`API running on http://localhost:${port}/api`);
 }
 bootstrap();

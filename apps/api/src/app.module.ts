@@ -9,6 +9,9 @@ import { KnowledgeBasesModule } from './knowledge-bases/knowledge-bases.module';
 import { DocumentsModule } from './documents/documents.module';
 import { ChatModule } from './chat/chat.module';
 import { SearchModule } from './search/search.module';
+import { LlmModule } from './llm/llm.module';
+import { VectorModule } from './vector/vector.module';
+import { IngestionModule } from './ingestion/ingestion.module';
 
 @Module({
   imports: [
@@ -16,6 +19,9 @@ import { SearchModule } from './search/search.module';
     PrismaModule,
     AuthModule,
     UsersModule,
+    LlmModule,
+    VectorModule,
+    IngestionModule,
     KnowledgeBasesModule,
     DocumentsModule,
     ChatModule,

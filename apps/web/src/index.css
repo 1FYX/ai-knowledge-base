@@ -1,38 +1,56 @@
-*, *::before, *::after {
-  box-sizing: border-box;
+@import "tailwindcss";
+
+/*
+ * class-based 暗色模式：Tailwind v4 默认用 prefers-color-scheme（跟随系统），
+ * 我们通过 <html class="dark"> 手动控制，必须重定义 dark 变体，
+ * 否则 dark:bg-* 等 dark: 前缀的类不会生成 → 暗色下组件透明。
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Flowbite React 的 Tailwind 插件（v4 写法）。
+ * 这个插件把 flowbite-react 组件的主题（颜色、组件类映射）注册进 Tailwind。
+ */
+@plugin "flowbite-react/plugin/tailwindcss";
+
+/*
+ * 扫描 flowbite-react 的 theme 文件——所有组件的 className 字面量都在这里。
+ * Tailwind v4 默认不扫描 node_modules，必须显式 @source。
+ */
+@source "../node_modules/flowbite-react/dist/components/**/theme.js";
+@source "../node_modules/flowbite-react/dist/theme/**/*.js";
+
+/* 暗色主题：Flowbite 通过 <html class="dark"> 触发 */
+html.dark {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
 }
 
 body {
   margin: 0;
-  padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  background: #0f172a;
-  color: #f8fafc;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-#root {
-  min-height: 100vh;
-}
-
+/* 自定义滚动条（暗色） */
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 8px;
+  height: 8px;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
   background: #475569;
-  border-radius: 3px;
+  border-radius: 4px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
   background: #64748b;
-}
-
-a:hover {
-  background: #334155 !important;
 }
