@@ -19,6 +19,7 @@
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
+    "dotenv-cli": "^11.0.0",
     "turbo": "^2.5.0"
   },
   "packageManager": "pnpm@9.15.0",

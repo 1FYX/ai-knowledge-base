@@ -1,165 +1,213 @@
 # AI Knowledge Base - 完善计划 (Roadmap)
 
 > 演进路线与任务拆解。每项任务标注优先级（🔴 高 / 🟡 中 / 🟢 低）与所属里程碑。
+> 本轮决策：**前端全栈迁移到 shadcn/ui**，**后端优先做 RAG 核心链路**。
 
 ## 里程碑总览
 
 | 里程碑 | 目标 |
 |---|---|
 | **M1 — 工程基线加固** | 修复阻断性 bug，统一工程规范 |
-| **M2 — RAG 核心链路** | 打通文档向量化 → 向量检索 → LLM 回答的主链路 |
+| **M2 — RAG 核心链路** | 打通文档向量化 → 向量检索 → LLM 回答的主链路（最高优先） |
 | **M3 — 文档处理流水线** | 文件上传、解析、切片、异步处理 |
-| **M4 — 体验与稳定性** | 前端补齐、权限完善、测试与可观测性 |
-| **M5 — 生产化** | 缓存、限流、对象存储、CI 完善 |
+| **M4 — 前端美化（shadcn/ui）** | 全栈迁移到现代 UI 技术栈 |
+| **M5 — 体验、稳定性与生产化** | 权限、测试、缓存、CI 完善 |
 
 ---
 
-## M1 — 工程基线加固（优先做，阻断后续）
+## M1 — 工程基线加固
 
 修复阻断性 bug 与统一工程规范。
 
-### M1.1 🔴 修复阻断性 Bug
+### M1.1 🔴 已修复 / 待清理
 
-- [ ] **`DocumentsModule` 漏注册第二个 controller**
-  - `documents.module.ts` 的 `controllers` 只声明了 `DocumentsController`，`KBDocsController`（路由 `knowledge-bases/:kbId/documents`）未注册 → 前端 `docApi.list/create` 实际 404。
-  - 修复：将 `KBDocsController` 加入 `controllers` 数组。
+- [x] Prisma schema 相对路径错误（改为 `prisma/schema.prisma`）
+- [x] `.env` 读取失败（`dotenv-cli` 指定根 `.env`，NestJS `envFilePath`）
+- [x] DB 镜像换为 `pgvector/pgvector:pg16`
+- [x] Prisma 首次迁移 `init` 已生成
+- [x] `@nestjs/jwt` 类型问题（`as StringValue` + 安装 `ms`/`@types/ms`）
+- [x] `JwtModule` 全局化（`global: true`）解决守卫注入
+- [ ] **`DocumentsModule` 漏注册第二个 controller**：`KBDocsController` 未加入 `controllers` 数组 → 前端 `docApi.list/create` 404
+- [ ] **修复 SSE 流式接口**：当前 `@Sse` + `POST` + `@Body` 与 EventSource 不兼容；改为 `fetch` + `ReadableStream`（可 POST + 带 Authorization 头）
+- [ ] **统一包管理器**：删除 `apps/web/package-lock.json`，改用根 `pnpm-lock.yaml`
+- [ ] docker-compose 补 `redis` 服务（M5 RAG/限流依赖）
+- [ ] 环境变量 schema 校验（Joi/Zod）
+- [ ] 清理脚手架残留（`app.controller.spec.ts` 断言、`apps/web` 模板资源）
 
-- [ ] **修复 SSE 流式接口**
-  - `ChatController.streamMessage` 用 `@Sse` + `POST` + `@Body`；浏览器 `EventSource` 仅支持 GET 且无法发 body；前端 `chatApi.streamMessage` 构造的 EventSource 未带 token 也未传 content。
-  - 方案：改为 GET，query 传 `content` 与 token；或改用 fetch + `ReadableStream`（可 POST + 带 Authorization 头）。推荐后者以避免 token 进 URL。
+### M1.2 🟡 代码规范
 
-- [ ] **统一包管理器**
-  - `apps/web/package-lock.json`（npm）与 monorepo 的 pnpm 体系冲突，Dockerfile/CI 均按 pnpm workspace 跑。
-  - 修复：删除 `apps/web/package-lock.json`，统一用根 `pnpm-lock.yaml`。
-
-- [ ] **Prisma schema 路径一致性**
-  - 根 `package.json` 的 `db:seed` 用 `ts-node apps/api/prisma/seed.ts`，需在根目录运行；`prisma.schema` 配置路径与相对引用需复核。
-  - 修复：确认所有 prisma 命令的 cwd，或改为 `prisma db seed` + 配置。
-
-### M1.2 🟡 补齐工程基建
-
-- [ ] **添加 Prisma 迁移文件**
-  - `apps/api/prisma/` 下无 migrations 目录。
-  - 任务：执行 `prisma migrate dev --name init` 并提交 `migrations/`，保证开箱即用。
-
-- [ ] **docker-compose 补齐 Redis 与 pgvector 初始化**
-  - `docker-compose.yml` 无 redis 服务（架构文档与限流设计依赖 Redis）；DB 镜像需替换为 `pgvector/pgvector:pg16`。
-  - 任务：①加 `redis` 服务；②DB 镜像替换为 pgvector 官方镜像；③加初始化脚本 `CREATE EXTENSION IF NOT EXISTS vector;`。
-
-- [ ] **环境变量校验**
-  - `@nestjs/config` 已全局注入但无 schema 校验。
-  - 任务：用 Joi 或 Zod 定义 env schema，启动时校验。
-
-- [ ] **清理脚手架残留**
-  - 更新 `app.controller.spec.ts` 断言；移除 `apps/web` 默认模板资源（`App.css`、`assets/react.svg` 等）。
-
-### M1.3 🟢 代码规范对齐
-
-- [ ] 消除业务代码中的 `any`（`AGENTS.md` 已禁用）：`KnowledgeBasesService.create/update(dto: any)`、各 controller 的 `@CurrentUser() user: any` 等，改为定义 DTO 与 `JwtPayload` 类型。
-- [ ] DTO 补全：`documents`、`chat`、`search` 模块用 `@Body() dto: any`，需补 class-validator DTO。
+- [ ] 消除业务代码 `any`（`AGENTS.md` 已禁用）：`KnowledgeBasesService.create/update`、各 controller `@CurrentUser() user: any` 等
+- [ ] 补全 DTO：`documents`/`chat`/`search` 用 `@Body() dto: any` → class-validator DTO
+- [ ] 统一 Logger（`main.ts` 仍用 `console.log`，`AGENTS.md` 已禁用）
 
 ---
 
-## M2 — RAG 核心链路（项目价值所在）
+## M2 — RAG 核心链路（最高优先级）
 
-把"假"的 RAG 变成"真"的。**建议在 M1 完成后立即推进。**
+项目核心价值所在。**建议 M1 关键 bug 修复后立即推进。**
 
-### M2.1 🔴 LLM 与 Embedding 抽象层
+### M2.1 🔴 LLM / Embedding 抽象层
 
-- [ ] 新建 `llm/` 模块：封装 OpenAI client，暴露 `embed(text): Promise<number[]>` 与 `chatStream(messages): AsyncIterable<string>`。
-- [ ] 新建 `vector/` 模块：封装 pgvector 读写，暴露 `upsertEmbedding(chunk, vector)`、`search(vector, kbId, k)`。
-- [ ] 配置 OpenAI base url / model 到 env（`.env.example` 已有），支持 Azure OpenAI / 本地模型切换。
+新建两个模块，封装外部依赖，便于后续切换 provider（OpenAI / Azure / 本地）。
+
+- [ ] **`llm/` 模块**
+  - `embed(texts: string[]): Promise<number[][]>` —— 批量 embedding（OpenAI `text-embedding-3-small`，1536 维）
+  - `chatStream(messages, options): AsyncIterable<string>` —— 流式 chat（`gpt-4o`）
+  - `chat(messages, options): Promise<string>` —— 非流式 chat
+  - 配置走 env：`OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_CHAT_MODEL` / `OPENAI_EMBEDDING_MODEL`
+  - `llm.module.ts`（global）、`llm.service.ts`、`llm.controller.ts`（可选，调试用）
+- [ ] **`vector/` 模块**
+  - `upsertChunks(chunks: { content; embedding; documentId; chunkIndex }[])` —— 批量写入 `document_chunks`
+  - `search(queryEmbedding: number[], kbId: string, k: number)` —— pgvector 相似度检索
+  - `deleteByDocument(documentId: string)` —— 文档删除时清理向量
+  - 用 `$queryRaw` 执行 `ORDER BY embedding <=> $1 LIMIT $2`（Prisma 原生不支持 vector 运算符）
 
 ### M2.2 🔴 真实语义检索
 
 - [ ] 重写 `SearchService.semanticSearch`：
-  1. 调 `llm.embed(query)` 生成查询向量；
-  2. pgvector `ORDER BY embedding <=> query_embedding LIMIT k`；
-  3. 返回真实 `similarity = 1 - (embedding <=> query)`（替换硬编码的 `0.85`）。
-- [ ] 加 HNSW / IVFFlat 索引（`docs/database.md` 已给 SQL）。
+  1. `llm.embed([query])` → 查询向量
+  2. `vector.search(vec, kbId, k=5)` → pgvector 检索
+  3. 返回真实 `similarity = 1 - (embedding <=> query)`（替换硬编码 `0.85`）
+- [ ] 加 HNSW 索引（`docs/database.md` 已给 SQL，首次有数据后建）：
+  ```sql
+  CREATE INDEX idx_document_chunks_embedding_hnsw
+    ON document_chunks USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
+  ```
+- [ ] 新增 `POST /api/search/similar`（按 chunk 找相似，用于"相关文档"推荐）
 
-### M2.3 🔴 真实对话回答（接入 LLM + RAG）
+### M2.3 🔴 真实对话回答（RAG）
 
 - [ ] 重写 `ChatService.sendMessage` / `streamMessage`：
-  1. 生成 query embedding；
-  2. 向量检索 top-k 片段；
-  3. 拼 system prompt + 召回上下文 + 历史；
-  4. 调 `llm.chatStream` 流式返回；
-  5. 把召回片段写入 `ChatMessage.sources`（供前端展示引用）。
-- [ ] 保存 `tokenCount` 与 `latency`（schema 已有字段，当前未写入）。
+  1. 生成 query embedding
+  2. 向量检索 top-k 片段
+  3. 拼 prompt：system + 召回上下文（带来源标注）+ 最近 N 轮历史
+  4. 调 `llm.chatStream` 流式返回
+  5. 完成后写入 `ChatMessage`，`sources` 字段存引用（`[{documentId, chunkId, similarity, content}]`）
+  6. 写入 `tokenCount` 与 `latency`（schema 已有字段，当前未写）
+- [ ] SSE 接口修复后（M1.1），前端对接流式渲染
+
+### M2.4 🟡 RAG 调优
+
+- [ ] 召回数量、相似度阈值、重排序（可选 reranker）
+- [ ] system prompt 模板化（可按知识库自定义，schema 已有 `systemPrompt`）
+- [ ] 历史消息截断策略（防止 context 超限）
 
 ---
 
 ## M3 — 文档处理流水线
 
-让"上传文档"真正产出可检索的向量。
+让"上传文档"真正产出可检索的向量。**依赖 M2 的 embedding 能力。**
 
 ### M3.1 🔴 真实文件上传
 
-- [ ] 后端引入 Multer（`@nestjs/platform-express` 已装）：`@Post` + `@UseInterceptors(FileInterceptor)` + 磁盘/S3 存储。
-- [ ] 替换前端"伪上传"：`KnowledgeBaseDetail.handleFileChange` 由 POST 元数据改为 `FormData` 真实上传。
-- [ ] 文件大小/类型校验，返回 `Document` 记录与状态。
+- [ ] 后端 Multer（`@nestjs/platform-express` 已装）：`@UseInterceptors(FileInterceptor)` + 磁盘/S3 存储
+- [ ] 替换前端"伪上传"：`KnowledgeBaseDetail.handleFileChange` 由 POST 元数据改为 `FormData` 真实上传
+- [ ] 文件大小/类型校验（PDF/DOCX/TXT/MD），返回 `Document` 记录（status=PENDING）
 
-### M3.2 🟡 文档解析与切片
+### M3.2 🟡 解析与切片
 
 - [ ] 新建 `ingestion/` 模块：
-  - 解析：PDF / DOCX / TXT / MD（建议 `pdf-parse` + `mammoth` + 原生读取，或 LangChain text splitter）。
-  - 切片：按 `KnowledgeBase.chunkSize` / `chunkOverlap`（schema 已有配置，当前未消费）分块。
-- [ ] 写入 `DocumentChunk`（content + chunkIndex + pageNumber）。
+  - 解析：PDF（`pdf-parse`）/ DOCX（`mammoth`）/ TXT/MD（原生）
+  - 切片：按 `KnowledgeBase.chunkSize`（默认 1000）/ `chunkOverlap`（默认 200）分块，schema 已有配置
+- [ ] 写入 `DocumentChunk`（content + chunkIndex + pageNumber）
+- [ ] 调 `llm.embed` 生成向量 → `vector.upsertChunks`
 
 ### M3.3 🟡 异步处理
 
-- [ ] 引入 BullMQ（基于 Redis），定义 `ingestion` 队列：上传 → 入队 → worker 解析+切片+embedding+入库。
-- [ ] 文档状态机：`PENDING → PROCESSING → INDEXED` / `ERROR`（含 `errorMessage`，schema 已有字段）。
-- [ ] 前端轮询或 SSE 推送处理进度。
+- [ ] BullMQ（依赖 Redis）：上传 → 入队 `ingestion` → worker 解析+切片+embedding+入库
+- [ ] 状态机：`PENDING → PROCESSING → INDEXED` / `ERROR`（含 `errorMessage`，schema 已有）
+- [ ] 前端轮询文档状态 / SSE 推送进度
 
 ---
 
-## M4 — 体验与稳定性
+## M4 — 前端美化（shadcn/ui 全栈迁移）
 
-### M4.1 🔴 权限与安全
+将前端从"手写内联 style + hash 路由 + 原生 fetch"升级为现代技术栈，与 `AGENTS.md` 既定方向对齐。
 
-- [ ] **资源归属校验**：`knowledge-bases` 的 `getById/update/delete`、`documents` 的 `getById/delete` 均不校验 owner，任何登录用户可操作他人数据；`chat.sendMessage` 已校验 —— 需统一补齐。
-- [ ] 引入 RBAC 守卫（`@Roles()` 装饰器，schema 已有 `UserRole`）。
-- [ ] 登出 / refresh token。
+### 当前前端实际技术栈（迁移基线）
 
-### M4.2 🟡 前端补齐
+| 类别 | 现状 | 目标 |
+|---|---|---|
+| 路由 | 手写 hash 路由 | React Router v6 |
+| 服务端状态 | `useState`+`useEffect`+`fetch` | TanStack Query |
+| 客户端状态 | React Context | Zustand |
+| 样式 | 全部内联 `style={{}}` | Tailwind CSS |
+| 组件 | 手写原生标签 | shadcn/ui |
 
-- [ ] **与文档设计对齐**：`AGENTS.md` 规划了 Tailwind + shadcn/ui + TanStack Query + Zustand + React Router，需决定补齐技术栈或更新文档。
-- [ ] 对接 SSE 流式（依赖 M1.1 的接口修复）。
-- [ ] 展示回答的 `sources` 引用。
-- [ ] 文档上传后的状态轮询 / 进度展示。
+> 现状：除 React + Vite 外几乎无第三方库。内联 style 分布：Layout 10、Chat 16、KBDetail 18、KBList 16、Login 11 处。
 
-### M4.3 🟢 测试
+### M4.1 🔴 基建引入
 
-- [ ] 业务模块单测覆盖率。
-- [ ] e2e 测试覆盖认证、知识库、检索主链路。
+- [ ] 安装 Tailwind CSS v4 + 配置 `tailwind.config` + `index.css` 引入
+- [ ] 安装 shadcn/ui（`npx shadcn@latest init`），配置路径别名 `@/*`
+- [ ] 安装 React Router v6，替换手写 hash 路由（`/login` `/kbs` `/kbs/:id` `/chat/:id`）
+- [ ] 安装 TanStack Query：`QueryClientProvider` 包裹 App，封装 `useQuery`/`useMutation` hooks
+- [ ] 安装 Zustand：迁移 `useAuth` 状态（token/user/loading）到 store
+- [ ] 重构 `lib/api.ts`：保留 fetch 封装，但 token 从 store 读，401 自动登出跳转
 
-### M4.4 🟢 可观测性
+### M4.2 🔴 核心 UI 组件搭建
 
-- [ ] 统一 Logger（`AGENTS.md` 禁用 `console.log`）。
-- [ ] 请求日志拦截器、Pino 或 winston 接入。
+按 shadcn/ui 引入（`npx shadcn@latest add <component>`）：
+
+- [ ] **Layout**：`Sidebar`（导航：知识库/对话）+ `Avatar`（用户头像）+ `DropdownMenu`（登出）+ `Toaster`（全局通知）
+- [ ] **Login**：`Card` + `Form` + `Input` + `Button` + `Tabs`（登录/注册切换）
+- [ ] **KnowledgeBases**：`Card` 网格 + `Dialog`（新建）+ `AlertDialog`（删除确认）+ `Skeleton`（加载态）
+- [ ] **KnowledgeBaseDetail**：`Tabs`（文档/设置）+ 文档列表 `Table` + `Upload` 区（dropzone）+ 状态 `Badge`
+- [ ] **Chat**：消息气泡 + 流式打字效果 + `sources` 引用卡片 + `Textarea` + `ScrollArea`
+
+### M4.3 🟡 设计系统统一
+
+- [ ] 定义主题：深色模式为主（延续现有 `#0f172a` 基调），支持浅色切换
+- [ ] 统一 spacing / radius / typography（Tailwind token）
+- [ ] 响应式断点（移动端可用）
+
+### M4.4 🟢 体验增强
+
+- [ ] Chat 流式渲染（对接 M2.3 + M1.1 SSE 修复）
+- [ ] 文档处理进度展示（对接 M3.3）
+- [ ] Markdown 渲染 + 代码高亮（回答里的代码块）
+- [ ] 回答"复制 / 重新生成 / 反馈"操作栏
+- [ ] 空状态插画 / 加载骨架屏
 
 ---
 
-## M5 — 生产化
+## M5 — 体验、稳定性与生产化
 
-- [ ] Redis 接入：会话、限流（`RATE_LIMIT_TTL/MAX`）、缓存。
-- [ ] 对象存储抽象（`STORAGE_TYPE=local|s3|minio`）。
-- [ ] nginx TLS / 域名配置。
-- [ ] CI：`pnpm format --check` 进流水线。
-- [ ] 生产镜像瘦身 / 多架构构建 / 镜像漏洞扫描。
+### M5.1 🔴 权限与安全
+
+- [ ] **资源归属校验**：`knowledge-bases`/`documents` 的 `getById/update/delete` 均不校验 owner；`chat.sendMessage` 已校验 → 统一补齐
+- [ ] RBAC 守卫（`@Roles()` 装饰器，schema 已有 `UserRole`）
+- [ ] 登出 / refresh token
+
+### M5.2 🟢 测试
+
+- [ ] 业务模块单测覆盖率
+- [ ] e2e 覆盖认证、知识库、检索、对话主链路
+
+### M5.3 🟢 可观测性
+
+- [ ] 请求日志拦截器、Pino/winston 接入
+- [ ] 前端错误上报（可选）
+
+### M5.4 🟢 生产化
+
+- [ ] Redis 接入：会话、限流（`RATE_LIMIT_TTL/MAX`）、缓存
+- [ ] 对象存储抽象（`STORAGE_TYPE=local|s3|minio`）
+- [ ] nginx TLS / 域名
+- [ ] CI：`pnpm format --check` 进流水线
+- [ ] 镜像瘦身 / 多架构构建 / 漏洞扫描
 
 ---
 
 ## 建议推进顺序
 
-1. **M1（工程基线）** —— 修阻断性 bug + 补迁移 + 统一包管理。
-2. **M2（RAG 链路）** —— 项目核心价值，建议优先于 M3。
-3. **M4.1（权限）** —— 安全问题，可与 M2 并行。
-4. **M3（文档流水线）** —— 让上传真正可用。
-5. **M4 / M5** —— 体验打磨与生产化。
+1. **M1.1 剩余项** —— SSE 修复、`KBDocsController` 注册、统一包管理（半天）
+2. **M2 RAG 链路** —— 核心价值，简历亮点（重点投入）
+3. **M3 文档流水线** —— 让上传真正可用（依赖 M2）
+4. **M4 前端美化** —— shadcn/ui 迁移（可与 M2/M3 部分并行，因前后端解耦）
+5. **M5 稳定性与生产化** —— 打磨收尾
 
 ---
 
-> 本文档随项目演进持续更新。完成任务后请勾选对应 checkbox 并在提交信息中引用里程碑编号（如 `feat(m2): implement vector search`）。
+> 完成任务后请勾选对应 checkbox，提交信息引用里程碑编号（如 `feat(m2): implement vector search`、`feat(m4): migrate to shadcn/ui layout`）。

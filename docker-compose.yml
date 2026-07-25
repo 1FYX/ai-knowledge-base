@@ -4,14 +4,14 @@
 version: "3.8"
 
 services:
-  # PostgreSQL Database
+  # PostgreSQL Database (with pgvector extension)
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: akb-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: akb
-      POSTGRES_PASSWORD: akb_dev_password
+      POSTGRES_PASSWORD: akb_password
       POSTGRES_DB: ai_knowledge_base
     volumes:
       - postgres_data:/var/lib/postgresql/data
